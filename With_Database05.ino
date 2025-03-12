@@ -4,7 +4,7 @@
 #include <Keyboard.h>
 #include <WiFiS3.h>
 #include <ArduinoHttpClient.h>
-#include <RTClib.h>  // Add RTC library for date and time
+#include <TimeLib.h>  // Time library instead of RTC
 
 // OLED Display Setup
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
@@ -26,22 +26,33 @@ SoftwareSerial qrScanner(RX_PIN, TX_PIN);
 WiFiSSLClient wifiClient;
 HttpClient httpClient(wifiClient, "sammuel-17249-default-rtdb.firebaseio.com", 443);
 
-// RTC setup
-RTC_DS3231 rtc;
+// Month names array for formatting
+const char* monthNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 bool locked = true; 
 bool scanComplete = false; 
-String lastScannedQR = "";  // Store the last scanned QR code
+
+// Initial time setup - set this to your current date and time
+// Format: year, month, day, hour, minute, second
+// Example: March 13, 2025, 15:30:00
+#define INITIAL_YEAR 2025
+#define INITIAL_MONTH 3
+#define INITIAL_DAY 13
+#define INITIAL_HOUR 23
+#define INITIAL_MINUTE 32
+#define INITIAL_SECOND 0
 
 void displayMessage(const char *message);
 void displayQRData(String data);
-void sendDataToFirebase(String qrData, String timeStamp, bool isTimeIn);
+void sendDataToFirebase(String qrData, bool isTimeIn);
 String readQRData();
 void resetLEDs();
 void unlockPC();
 void lockPC();
 void connectToWiFi();
-String getCurrentDateTime();
+String getFormattedDate();
+String getFormattedTime();
+void setupTime();
 
 void setup() {
     Serial.begin(115200);
@@ -58,23 +69,21 @@ void setup() {
     qrScanner.begin(9600);
     Keyboard.begin();  
 
-    // Initialize RTC
-    if (!rtc.begin()) {
-        Serial.println("Couldn't find RTC");
-        displayMessage("RTC Error!");
-        delay(2000);
-    } else {
-        //Set the RTC to the date & time this sketch was compiled
-        //Uncomment this line to set the RTC time once, then comment it out again
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-        Serial.println("RTC initialized");
-    }
+    // Setup internal time
+    setupTime();
+    Serial.println("Time system initialized");
 
     digitalWrite(RED_LED, HIGH);
     displayMessage("System Locked");
     delay(1500);
 
     connectToWiFi();
+}
+
+void setupTime() {
+    // Set the time to the values defined in the initial constants
+    setTime(INITIAL_HOUR, INITIAL_MINUTE, INITIAL_SECOND, INITIAL_DAY, INITIAL_MONTH, INITIAL_YEAR);
+    Serial.println("Time set to: " + getFormattedDate() + " " + getFormattedTime());
 }
 
 void loop() {
@@ -86,13 +95,9 @@ void loop() {
             Serial.println("QR Data: " + qrData);
             displayQRData(qrData);
             
-            // Get current date and time
-            String timeStamp = getCurrentDateTime();
-            
             if (locked) {  
                 // This is a time-in scan
-                sendDataToFirebase(qrData, timeStamp, true);
-                lastScannedQR = qrData;  // Save the QR code
+                sendDataToFirebase(qrData, true);
                 
                 unlockPC();
                 digitalWrite(GREEN_LED, HIGH);
@@ -101,8 +106,7 @@ void loop() {
                 displayMessage("Scan To Lock");  
             } else {  
                 // This is a time-out scan
-                sendDataToFirebase(qrData, timeStamp, false);
-                lastScannedQR = "";  // Clear the stored QR code
+                sendDataToFirebase(qrData, false);
                 
                 lockPC();
                 digitalWrite(RED_LED, HIGH);
@@ -117,33 +121,41 @@ void loop() {
     }
 }
 
-String getCurrentDateTime() {
-    DateTime now = rtc.now();
-    
-    // Format: YYYY-MM-DD HH:MM:SS
-    char buffer[20];
-    sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d", 
-            now.year(), now.month(), now.day(), 
-            now.hour(), now.minute(), now.second());
-    
-    return String(buffer);
+String getFormattedDate() {
+    // Format date as "Mmm dd yyyy" (e.g., "Mar 14 2025")
+    char dateBuffer[12];
+    sprintf(dateBuffer, "%s %02d %04d", 
+            monthNames[month() - 1], day(), year());
+    return String(dateBuffer);
 }
 
-void sendDataToFirebase(String qrData, String timeStamp, bool isTimeIn) {
+String getFormattedTime() {
+    // Format time as "hh:mm:ss" (e.g., "14:30:45")
+    char timeBuffer[9];
+    sprintf(timeBuffer, "%02d:%02d:%02d", 
+            hour(), minute(), second());
+    return String(timeBuffer);
+}
+
+void sendDataToFirebase(String qrData, bool isTimeIn) {
+    // Get current date and time at the moment of scanning
+    String formattedDate = getFormattedDate();
+    String formattedTime = getFormattedTime();
+    
     String path = "/scannedData.json";
     String jsonData;
     
     if (isTimeIn) {
         // Time-in record
         jsonData = "{\"qrCode\": \"" + qrData + "\", "
-                + "\"timeIn\": \"" + timeStamp + "\", "
-                + "\"date\": \"" + timeStamp.substring(0, 10) + "\", "
+                + "\"date\": \"" + formattedDate + "\", "
+                + "\"timeIn\": \"" + formattedTime + "\", "
                 + "\"status\": \"in\"}";
     } else {
         // Time-out record
         jsonData = "{\"qrCode\": \"" + qrData + "\", "
-                + "\"timeOut\": \"" + timeStamp + "\", "
-                + "\"date\": \"" + timeStamp.substring(0, 10) + "\", "
+                + "\"date\": \"" + formattedDate + "\", "
+                + "\"timeOut\": \"" + formattedTime + "\", "
                 + "\"status\": \"out\"}";
     }
 
@@ -176,7 +188,8 @@ void sendDataToFirebase(String qrData, String timeStamp, bool isTimeIn) {
         u8g2.drawStr(0, 10, "QR Scanned:");
         u8g2.drawStr(0, 20, qrData.c_str());
         u8g2.drawStr(0, 30, isTimeIn ? "Time IN:" : "Time OUT:");
-        u8g2.drawStr(0, 40, timeStamp.c_str());
+        u8g2.drawStr(0, 40, formattedTime.c_str());
+        u8g2.drawStr(0, 50, formattedDate.c_str());
         u8g2.sendBuffer();
     } else {
         Serial.println("❌ Failed to send data!");
