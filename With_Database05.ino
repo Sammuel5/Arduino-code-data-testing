@@ -142,6 +142,7 @@ void sendDataToFirebase(String qrData, bool isTimeIn) {
     String formattedDate = getFormattedDate();
     String formattedTime = getFormattedTime();
     
+    // Create a path for the QR code
     String path = "/scannedData.json";
     String jsonData;
     
