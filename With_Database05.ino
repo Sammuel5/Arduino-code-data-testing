@@ -175,10 +175,15 @@ String getFormattedDate() {
 }
 
 String getFormattedTime() {
-    // Format time as "hh:mm:ss" (e.g., "14:30:45")
-    char timeBuffer[9];
-    sprintf(timeBuffer, "%02d:%02d:%02d", 
-            hour(), minute(), second());
+    // Format time as "hh:mm:ss AM/PM" (e.g., "02:30:45 PM")
+    char timeBuffer[12];
+    int h = hour();
+    const char* ampm = h >= 12 ? "PM" : "AM";
+    h = h > 12 ? h - 12 : h;
+    h = h == 0 ? 12 : h;  // Handle midnight (0 hour) as 12 AM
+    
+    sprintf(timeBuffer, "%02d:%02d:%02d %s", 
+            h, minute(), second(), ampm);
     return String(timeBuffer);
 }
 
